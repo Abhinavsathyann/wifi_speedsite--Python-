@@ -40,5 +40,5 @@ It provides **real-time download, upload, and ping measurements**, animated visu
 1. **Clone the repository**
 
 ```bash
-git clone https://github.com/yourusername/advanced-wifi-speedtest.git
+git clone https://github.com/Abhinavsathyann/wifi_speedsite-Python.git
 cd advanced-wifi-speedtest
