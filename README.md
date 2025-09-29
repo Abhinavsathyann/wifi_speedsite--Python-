@@ -54,7 +54,7 @@ http://127.0.0.1:5000
 ---
 Installation
 
-1. **Clone the repository**
+1. Clone the repository
 
 ```bash
 git clone https://github.com/Abhinavsathyann/wifi_speedsite-Python.git
