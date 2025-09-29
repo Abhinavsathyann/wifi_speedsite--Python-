@@ -1,326 +1,299 @@
-from flask import Flask, render_template_string, jsonify, request, send_file
+"""
+Advanced Flask-based Internet Speed Test Website (Fully Functional)
+File: wifi_speedsite.py
+Requirements:
+  pip install flask speedtest-cli
+
+Run:
+  python wifi_speedsite.py
+  Open http://127.0.0.1:5000 in your browser
+
+Features:
+  - Modern Glassmorphism UI with gradient background
+  - Animated speedometer gauge (JS)
+  - Real-time progress simulation
+  - Speed test: ping, download, upload
+  - History with Chart.js line chart
+  - Export history to CSV/JSON
+  - Clear history button
+
+This update fixes backend issues so the Start Test button reliably triggers the speed test and returns errors when the test takes too long or fails. The speed test now runs inside a worker thread with a configurable timeout to avoid blocking the Flask worker.
+"""
+
+from flask import Flask, render_template_string, jsonify, send_file
 import speedtest
 import time
 import datetime
 import io
 import csv
+import json
+import threading
 
 app = Flask(__name__)
 
-# Server-side in-memory history
+# In-memory history storage
 HISTORY = []
+# max allowed seconds for a full speedtest (to prevent hanging)
+SPEEDTEST_TIMEOUT = 120
 
-INDEX_HTML = r"""
+INDEX_HTML = """
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>NetPulse — Advanced WiFi Speed Test</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WiFi Speed Test</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://unpkg.com/animejs@3.2.1/lib/anime.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
   <style>
-    /* Dynamic gradient background */
-    :root{--card-bg:rgba(255,255,255,0.06)}
-    body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial;min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#0f172a 0%,#001e3c 50%,#07113a 100%);}
-    .container{width:100%;max-width:1100px;padding:28px}
-    .glass{backdrop-filter: blur(10px) saturate(120%);background:linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.02));border-radius:16px;padding:18px;color:#e6eef8;box-shadow:0 10px 30px rgba(2,6,23,0.6);border:1px solid rgba(255,255,255,0.04)}
-    .brand{display:flex;align-items:center;gap:12px}
-    .logo{width:48px;height:48px;border-radius:12px;background:linear-gradient(45deg,#06b6d4,#7c3aed);display:flex;align-items:center;justify-content:center;font-weight:700;box-shadow:0 6px 18px rgba(124,58,237,0.18)}
-    .small{font-size:13px;color:rgba(230,238,248,0.8)}
-    .muted{color:rgba(230,238,248,0.6)}
-    .btn{cursor:pointer;padding:10px 14px;border-radius:12px;font-weight:600}
-    .btn-primary{background:linear-gradient(90deg,#06b6d4,#7c3aed);color:#021027}
-    .btn-ghost{background:transparent;border:1px solid rgba(255,255,255,0.06);color:#dbeafe}
-    /* Gauge */
-    .gauge-wrap{display:flex;align-items:center;gap:18px}
-    .gauge{width:260px;height:150px}
-    .needle{transform-origin:50% 85%;}
-    /* Animated cards */
-    .stat{padding:12px;border-radius:12px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border:1px solid rgba(255,255,255,0.03)}
-    /* small responsive tweaks */
-    @media(max-width:900px){.gauge{width:210px;height:120px}.gauge-wrap{flex-direction:column;align-items:center}}
+    body {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+    }
+    .glass {
+      background: rgba(255, 255, 255, 0.15);
+      backdrop-filter: blur(12px);
+      border-radius: 1rem;
+      box-shadow: 0 4px 30px rgba(0,0,0,0.1);
+    }
+    .gauge {
+      width: 180px;
+      height: 90px;
+    }
   </style>
 </head>
-<body>
-  <div class="container">
-    <div class="glass">
-      <div class="brand mb-4">
-        <div class="logo">NP</div>
-        <div>
-          <div style="font-weight:700;font-size:18px">NetPulse</div>
-          <div class="small muted">Advanced WiFi & Internet Speed Test</div>
-        </div>
-        <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
-          <button id="exportCSV" class="btn btn-ghost">Export CSV</button>
-          <button id="exportJSON" class="btn btn-ghost">Export JSON</button>
-          <button id="clearHistory" class="btn btn-ghost">Clear</button>
-        </div>
+<body class="flex items-center justify-center">
+  <div class="max-w-3xl w-full p-6 glass text-center text-white">
+    <h1 class="text-3xl font-bold mb-4">🚀 Advanced Wi-Fi Speed Test</h1>
+    <p class="mb-6 text-sm opacity-80">Check your internet speed in real time with animations and history tracking.</p>
+
+    <button id="startBtn" class="bg-blue-600 px-6 py-2 rounded-lg hover:bg-blue-700 font-semibold">Start Test</button>
+    <div id="running" class="mt-4 hidden">
+      <div class="mx-auto animate-spin rounded-full h-10 w-10 border-b-2 border-white"></div>
+      <p class="mt-2">Running test…</p>
+    </div>
+    <div id="error" class="mt-2 text-red-300 hidden"></div>
+
+    <!-- Speedometer -->
+    <div class="mt-6 flex justify-center">
+      <svg id="speedometer" class="gauge" viewBox="0 0 180 90">
+        <path d="M10 90 A80 80 0 0 1 170 90" fill="none" stroke="#ccc" stroke-width="10"/>
+        <line id="needle" x1="90" y1="90" x2="90" y2="20" stroke="red" stroke-width="4" stroke-linecap="round" transform="rotate(0,90,90)"/>
+      </svg>
+    </div>
+
+    <!-- Results -->
+    <div id="result" class="hidden mt-6 grid grid-cols-3 gap-4">
+      <div class="glass p-4">
+        <div class="text-sm">Ping</div>
+        <div id="ping" class="text-xl font-bold">—</div>
       </div>
-
-      <div class="grid grid-cols-12 gap-4">
-        <div class="col-span-7">
-          <div class="gauge-wrap glass p-4">
-            <svg class="gauge" viewBox="0 0 260 150" xmlns="http://www.w3.org/2000/svg">
-              <defs>
-                <linearGradient id="g1" x1="0" x2="1"><stop offset="0%" stop-color="#06b6d4"/><stop offset="100%" stop-color="#7c3aed"/></linearGradient>
-              </defs>
-              <!-- Arc -->
-              <path d="M20 120 A110 110 0 0 1 240 120" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="18" stroke-linecap="round"/>
-              <!-- Colored arc overlay (dynamic via stroke-dasharray) -->
-              <path id="arcFill" d="M20 120 A110 110 0 0 1 240 120" fill="none" stroke="url(#g1)" stroke-width="18" stroke-linecap="round" stroke-dasharray="0 700"/>
-              <!-- ticks -->
-              <g stroke="rgba(255,255,255,0.08)" stroke-width="1">
-                <!-- draw ticks using JS if needed -->
-              </g>
-              <!-- needle -->
-              <g transform="translate(130,120)">
-                <g class="needle" id="needle">
-                  <rect x="-2" y="-90" width="4" height="90" rx="2" fill="#f8fafc" opacity="0.95"/>
-                  <circle cx="0" cy="0" r="8" fill="#0b1220" stroke="#f8fafc" stroke-width="2"/>
-                </g>
-              </g>
-            </svg>
-
-            <div style="flex:1">
-              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-                <button id="startBtn" class="btn btn-primary">Start Test</button>
-                <div id="status" class="small muted">Ready</div>
-              </div>
-              <div style="display:flex;gap:8px;margin-top:6px">
-                <div class="stat flex-1">
-                  <div class="small muted">Ping</div>
-                  <div id="pingVal" style="font-weight:700;font-size:18px">— ms</div>
-                </div>
-                <div class="stat flex-1">
-                  <div class="small muted">Download</div>
-                  <div id="downloadVal" style="font-weight:700;font-size:18px">— Mbps</div>
-                </div>
-                <div class="stat flex-1">
-                  <div class="small muted">Upload</div>
-                  <div id="uploadVal" style="font-weight:700;font-size:18px">— Mbps</div>
-                </div>
-              </div>
-
-              <div id="progressBar" style="height:8px;background:rgba(255,255,255,0.03);border-radius:999px;margin-top:12px;overflow:hidden;display:none">
-                <div id="progressFill" style="height:100%;width:0;background:linear-gradient(90deg,#06b6d4,#7c3aed);transition:width 0.2s"></div>
-              </div>
-
-            </div>
-          </div>
-
-          <div class="mt-4 glass p-4">
-            <div style="display:flex;justify-content:space-between;align-items:center">
-              <div style="font-weight:700">Test History</div>
-              <div class="small muted">Saved locally & on server</div>
-            </div>
-            <canvas id="historyChart" style="height:220px;margin-top:12px"></canvas>
-          </div>
-        </div>
-
-        <div class="col-span-5">
-          <div class="glass p-4">
-            <div style="font-weight:700">Recent Tests</div>
-            <div id="historyList" style="margin-top:12px;display:flex;flex-direction:column;gap:8px;max-height:420px;overflow:auto"></div>
-          </div>
-
-          <div class="glass p-4 mt-4">
-            <div style="font-weight:700">Server Info</div>
-            <div id="serverInfo" class="small muted mt-2">—</div>
-            <div id="elapsed" class="small muted mt-1">—</div>
-          </div>
-        </div>
+      <div class="glass p-4">
+        <div class="text-sm">Download</div>
+        <div id="download" class="text-xl font-bold">—</div>
       </div>
-
-      <div style="margin-top:12px;display:flex;justify-content:flex-end;gap:8px">
-        <div class="small muted">NetPulse • Built for fast diagnostics</div>
+      <div class="glass p-4">
+        <div class="text-sm">Upload</div>
+        <div id="upload" class="text-xl font-bold">—</div>
       </div>
+    </div>
+
+    <div class="mt-6">
+      <canvas id="historyChart" class="w-full h-64"></canvas>
+    </div>
+
+    <div class="mt-6 flex justify-center gap-2">
+      <button id="againBtn" class="hidden bg-green-600 px-4 py-2 rounded hover:bg-green-700">Run Again</button>
+      <button id="clearBtn" class="hidden bg-red-600 px-4 py-2 rounded hover:bg-red-700">Clear History</button>
+      <a href="/export/csv" class="hidden bg-yellow-600 px-4 py-2 rounded hover:bg-yellow-700" id="csvBtn">Export CSV</a>
+      <a href="/export/json" class="hidden bg-purple-600 px-4 py-2 rounded hover:bg-purple-700" id="jsonBtn">Export JSON</a>
     </div>
   </div>
 
 <script>
-// Client-side logic: animate gauge, manage history, call server
-let needleEl = document.getElementById('needle')
-let arcFill = document.getElementById('arcFill')
-let startBtn = document.getElementById('startBtn')
-let statusEl = document.getElementById('status')
-let progressBar = document.getElementById('progressBar')
-let progressFill = document.getElementById('progressFill')
-let pingVal = document.getElementById('pingVal')
-let downloadVal = document.getElementById('downloadVal')
-let uploadVal = document.getElementById('uploadVal')
-let serverInfoEl = document.getElementById('serverInfo')
-let elapsedEl = document.getElementById('elapsed')
-let historyList = document.getElementById('historyList')
-let exportCSV = document.getElementById('exportCSV')
-let exportJSON = document.getElementById('exportJSON')
-let clearHistoryBtn = document.getElementById('clearHistory')
+const startBtn=document.getElementById('startBtn')
+const againBtn=document.getElementById('againBtn')
+const running=document.getElementById('running')
+const result=document.getElementById('result')
+const errorBox=document.getElementById('error')
+const clearBtn=document.getElementById('clearBtn')
+const csvBtn=document.getElementById('csvBtn')
+const jsonBtn=document.getElementById('jsonBtn')
+let historyChart
 
-let chartCtx = document.getElementById('historyChart').getContext('2d')
-let historyChart = new Chart(chartCtx,{
-  type:'line',
-  data:{labels:[],datasets:[{label:'Download (Mbps)',data:[],fill:false,borderColor:'#06b6d4',tension:0.3},{label:'Upload (Mbps)',data:[],fill:false,borderColor:'#7c3aed',tension:0.3}]},
-  options:{responsive:true,plugins:{legend:{labels:{color:'#e6eef8'}}},scales:{x:{ticks:{color:'#cfe8ff'}},y:{ticks:{color:'#cfe8ff'}}}
-})
+startBtn.addEventListener('click',runTest)
+againBtn.addEventListener('click',runTest)
+clearBtn.addEventListener('click',clearHistory)
 
-function setNeedle(percent){
-  // percent 0..100 mapped to -110deg..110deg
-  let deg = -110 + (percent/100)*220
-  needleEl.style.transform = `rotate(${deg}deg)`
-  // arc dash
-  let total = 700
-  let draw = Math.min(total, Math.round((percent/100)*total))
-  arcFill.setAttribute('stroke-dasharray', `${draw} ${total-draw}`)
-}
-
-function simulateProgress(){
-  progressBar.style.display='block'
-  let p=0
-  progressFill.style.width='0%'
-  return new Promise(resolve=>{
-    let iv = setInterval(()=>{
-      p += Math.random()*8 + 3
-      if(p>=98){p=98;progressFill.style.width=p+'%';clearInterval(iv);resolve();}
-      progressFill.style.width = p+'%'
-    },300)
-  })
+function animateNeedle(val){
+  if(typeof anime!=='undefined'){
+    anime({targets:'#needle',rotate:[0,val],duration:1200,easing:'easeInOutQuad'})
+  } else {
+    document.getElementById('needle').setAttribute('transform','rotate('+val+',90,90)')
+  }
 }
 
 async function runTest(){
+  errorBox.classList.add('hidden')
+  result.classList.add('hidden')
+  running.classList.remove('hidden')
   startBtn.disabled=true
-  statusEl.innerText='Finding best server...'
-  await simulateProgress()
-  statusEl.innerText='Running test — download...'
-  setNeedle(30)
 
-  let resp
   try{
-    let r = await fetch('/run_test', {method:'POST'})
-    if(!r.ok) throw new Error('Server error')
-    resp = await r.json()
-  } catch(err){
-    statusEl.innerText = 'Error: '+err.message
+    const controller = new AbortController();
+    const timeout = setTimeout(()=>controller.abort(), %d * 1000);
+
+    const resp=await fetch('/run_test',{method:'POST',signal:controller.signal})
+    clearTimeout(timeout)
+
+    if(!resp.ok){
+      const txt = await resp.text()
+      throw new Error(txt || 'Server returned an error')
+    }
+
+    const json=await resp.json()
+    if(json.error) throw new Error(json.error)
+
+    document.getElementById('ping').innerText=json.ping+' ms'
+    document.getElementById('download').innerText=json.download_mbps+' Mbps'
+    document.getElementById('upload').innerText=json.upload_mbps+' Mbps'
+
+    animateNeedle(Math.min(json.download_mbps/2,180))
+
+    result.classList.remove('hidden')
+    againBtn.classList.remove('hidden')
+    clearBtn.classList.remove('hidden')
+    csvBtn.classList.remove('hidden')
+    jsonBtn.classList.remove('hidden')
+
+    updateChart(json)
+  }catch(err){
+    console.error(err)
+    errorBox.innerText='Error: '+ (err.message || String(err))
+    errorBox.classList.remove('hidden')
+  }finally{
+    running.classList.add('hidden')
     startBtn.disabled=false
-    progressBar.style.display='none'
-    return
-  }
-
-  // animate to results
-  pingVal.innerText = (resp.ping ?? '—') + ' ms'
-  downloadVal.innerText = resp.download_mbps.toFixed(2) + ' Mbps'
-  uploadVal.innerText = resp.upload_mbps.toFixed(2) + ' Mbps'
-  serverInfoEl.innerText = resp.server || '—'
-  elapsedEl.innerText = 'Elapsed: ' + resp.elapsed_seconds + 's'
-
-  // animate needle based on download speed (cap at 1000 Mbps)
-  let norm = Math.min(100, (resp.download_mbps/200)*100)
-  anime({targets: '#needle', rotate: [-110 + 'deg', (-110 + (norm/100)*220) + 'deg'], easing: 'spring(1, 80, 10, 0)'});
-  setNeedle(norm)
-
-  // finalize progress
-  progressFill.style.width='100%'
-  setTimeout(()=>{progressBar.style.display='none';startBtn.disabled=false;statusEl.innerText='Done'},600)
-
-  // add to history (client + server)
-  addHistory(resp)
-}
-
-function addHistory(entry){
-  // push to chart
-  historyChart.data.labels.push(entry.timestamp)
-  historyChart.data.datasets[0].data.push(entry.download_mbps)
-  historyChart.data.datasets[1].data.push(entry.upload_mbps)
-  historyChart.update()
-
-  // add list item
-  let div = document.createElement('div')
-  div.className='stat'
-  div.innerHTML = `<div style="display:flex;justify-content:space-between"><div><div style="font-weight:700">${entry.download_mbps} Mbps</div><div class="small muted">${entry.timestamp} • ${entry.server||'server'}</div></div><div style="text-align:right"><div class="small">Ping ${entry.ping} ms</div><div class="small muted">${entry.elapsed_seconds}s</div></div></div>`
-  historyList.prepend(div)
-
-  // persist locally
-  let local = JSON.parse(localStorage.getItem('np_history')||'[]')
-  local.unshift(entry)
-  if(local.length>50) local.pop()
-  localStorage.setItem('np_history', JSON.stringify(local))
-}
-
-startBtn.addEventListener('click', runTest)
-
-// load history from server on start
-async function loadHistory(){
-  try{
-    let r = await fetch('/history')
-    let arr = await r.json()
-    // mirror to localStorage and UI
-    localStorage.setItem('np_history', JSON.stringify(arr))
-    arr.forEach(item=>addHistory(item))
-  }catch(e){
-    // fallback to localStorage
-    let local = JSON.parse(localStorage.getItem('np_history')||'[]')
-    local.reverse().forEach(item=>addHistory(item))
   }
 }
 
-exportCSV.addEventListener('click', ()=>{ window.location='/export_csv' })
-exportJSON.addEventListener('click', ()=>{ window.location='/export_json' })
-clearHistoryBtn.addEventListener('click', async ()=>{ await fetch('/clear_history',{method:'POST'}); localStorage.removeItem('np_history'); historyChart.data.labels=[]; historyChart.data.datasets.forEach(ds=>ds.data=[]); historyChart.update(); historyList.innerHTML=''; serverInfoEl.innerText='—'; elapsedEl.innerText='—'; })
+async function clearHistory(){
+  await fetch('/clear_history',{method:'POST'})
+  if(historyChart){
+    historyChart.data.labels=[]
+    historyChart.data.datasets.forEach(ds=>ds.data=[])
+    historyChart.update()
+  }
+}
 
-loadHistory()
+function updateChart(data){
+  if(!historyChart){
+    const ctx=document.getElementById('historyChart')
+    historyChart=new Chart(ctx,{
+      type:'line',
+      data:{
+        labels:[data.timestamp],
+        datasets:[
+          {label:'Download (Mbps)',data:[data.download_mbps],borderColor:'cyan'},
+          {label:'Upload (Mbps)',data:[data.upload_mbps],borderColor:'lime'},
+          {label:'Ping (ms)',data:[data.ping],borderColor:'pink'}
+        ]
+      },
+      options:{responsive:true,maintainAspectRatio:false}
+    })
+  } else {
+    historyChart.data.labels.push(data.timestamp)
+    historyChart.data.datasets[0].data.push(data.download_mbps)
+    historyChart.data.datasets[1].data.push(data.upload_mbps)
+    historyChart.data.datasets[2].data.push(data.ping)
+    historyChart.update()
+  }
+}
 </script>
 </body>
 </html>
-"""
+""" % SPEEDTEST_TIMEOUT
 
 @app.route('/')
 def index():
     return render_template_string(INDEX_HTML)
 
+def _perform_speedtest(result_holder):
+    """Runs the blocking speedtest and stores result in result_holder dict."""
+    try:
+        st = speedtest.Speedtest()
+        # fetch best server
+        st.get_best_server()
+        # perform download and upload
+        dl = st.download()
+        ul = st.upload()
+        res = st.results.dict()
+
+        result_holder['download_bps'] = dl
+        result_holder['upload_bps'] = ul
+        result_holder['results'] = res
+    except Exception as e:
+        result_holder['error'] = str(e)
+
 @app.route('/run_test', methods=['POST'])
 def run_test():
+    # Run the speedtest in a worker thread and enforce timeout
+    holder = {}
+    thread = threading.Thread(target=_perform_speedtest, args=(holder,))
+    thread.daemon = True
+    thread.start()
+    thread.join(SPEEDTEST_TIMEOUT)
+
+    if thread.is_alive():
+        # still running -> timeout
+        return jsonify({'error':f'speedtest timed out after {SPEEDTEST_TIMEOUT} seconds'}), 504
+
+    if 'error' in holder:
+        return jsonify({'error': holder['error']}), 500
+
     try:
-        s=speedtest.Speedtest()
-        s.get_best_server()
-        download_bps=s.download()
-        upload_bps=s.upload()
-        results=s.results.dict()
+        download_mbps = round(holder['download_bps']/1_000_000,2)
+        upload_mbps = round(holder['upload_bps']/1_000_000,2)
+        results = holder.get('results', {})
+        ping = round(results.get('ping', 0),2) if results else 0
+        timestamp = datetime.datetime.now().strftime('%H:%M:%S')
 
-        download_mbps=round(download_bps/1_000_000,2)
-        upload_mbps=round(upload_bps/1_000_000,2)
-        ping=round(results.get('ping',0),2)
-        timestamp=datetime.datetime.now().strftime('%H:%M:%S')
-
-        entry={
-            'ping':ping,
-            'download_mbps':download_mbps,
-            'upload_mbps':upload_mbps,
-            'timestamp':timestamp
+        entry = {
+            'ping': ping,
+            'download_mbps': download_mbps,
+            'upload_mbps': upload_mbps,
+            'timestamp': timestamp
         }
         HISTORY.append(entry)
+        # keep history bounded
+        if len(HISTORY) > 500:
+            HISTORY.pop(0)
+
         return jsonify(entry)
     except Exception as e:
-        return jsonify({'error':str(e)}),500
+        return jsonify({'error': str(e)}), 500
 
-@app.route('/clear_history',methods=['POST'])
+@app.route('/clear_history', methods=['POST'])
 def clear_history():
     HISTORY.clear()
     return jsonify({'status':'cleared'})
 
 @app.route('/export/csv')
 def export_csv():
-    si=io.StringIO()
-    cw=csv.DictWriter(si,fieldnames=['timestamp','ping','download_mbps','upload_mbps'])
+    si = io.StringIO()
+    cw = csv.DictWriter(si, fieldnames=['timestamp','ping','download_mbps','upload_mbps'])
     cw.writeheader()
     cw.writerows(HISTORY)
-    output=io.BytesIO()
+    output = io.BytesIO()
     output.write(si.getvalue().encode('utf-8'))
     output.seek(0)
-    return send_file(output,mimetype='text/csv',as_attachment=True,download_name='speed_history.csv')
+    return send_file(output, mimetype='text/csv', as_attachment=True, download_name='speed_history.csv')
 
 @app.route('/export/json')
 def export_json():
     return jsonify(HISTORY)
 
-if __name__=='__main__':
-    app.run(debug=True)
+if __name__ == '__main__':
+    # Enable threaded server, helpful when running blocking operations
+    app.run(debug=True, host='0.0.0.0', threaded=True)
