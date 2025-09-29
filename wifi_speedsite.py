@@ -1,5 +1,3 @@
-
-
 from flask import Flask, render_template_string, jsonify, send_file
 import speedtest
 import time
