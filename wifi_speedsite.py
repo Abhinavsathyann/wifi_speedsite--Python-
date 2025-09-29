@@ -22,22 +22,16 @@ INDEX_HTML = """
   <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
   <style>
     body {
-      background: linear-gradient(135deg, #1e3a8a, #9333ea, #f59e0b);
-      background-size: 600% 600%;
-      animation: gradientBG 20s ease infinite;
-    }
-    @keyframes gradientBG {
-      0% { background-position: 0% 50%; }
-      50% { background-position: 100% 50%; }
-      100% { background-position: 0% 50%; }
+      background-color: #ffffff;
+      color: #111827;
     }
     .glass {
       backdrop-filter: blur(20px) saturate(180%);
       -webkit-backdrop-filter: blur(20px) saturate(180%);
-      background-color: rgba(255, 255, 255, 0.15);
+      background-color: rgba(255, 255, 255, 0.9);
       border-radius: 20px;
-      border: 1px solid rgba(255, 255, 255, 0.25);
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.37);
+      border: 1px solid rgba(0, 0, 0, 0.1);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
     }
     .flip-card { perspective: 1000px; }
     .flip-card-inner {
@@ -56,22 +50,21 @@ INDEX_HTML = """
     .flip-card-back { transform: rotateY(180deg); }
   </style>
 </head>
-<body class="min-h-screen flex flex-col items-center justify-center text-white">
+<body class="min-h-screen flex flex-col items-center justify-center">
   <div class="glass p-6 w-11/12 max-w-5xl text-center">
     <h1 class="text-4xl font-extrabold mb-4">🚀 Advanced WiFi Speed Test</h1>
     
     <!-- Animated Gauge -->
     <svg id="gauge" width="220" height="220" class="mx-auto my-6">
-      <circle cx="110" cy="110" r="100" stroke="#444" stroke-width="20" fill="none"/>
+      <circle cx="110" cy="110" r="100" stroke="#ddd" stroke-width="20" fill="none"/>
       <circle id="progress" cx="110" cy="110" r="100" stroke="#10b981" stroke-width="20" fill="none"
         stroke-dasharray="628" stroke-dashoffset="628" transform="rotate(-90 110 110)" />
-      <text id="speedText" x="110" y="120" text-anchor="middle" font-size="26" fill="white">0 Mbps</text>
+      <text id="speedText" x="110" y="120" text-anchor="middle" font-size="26" fill="#111827">0 Mbps</text>
     </svg>
 
-    <button id="startBtn" class="px-6 py-3 bg-indigo-600 rounded-lg shadow-md hover:bg-indigo-700 transition">
+    <button id="startBtn" class="px-6 py-3 bg-indigo-600 text-white rounded-lg shadow-md hover:bg-indigo-700 transition">
       ▶ Start Test
     </button>
-    <button id="toggleTheme" class="ml-4 px-4 py-2 bg-gray-700 rounded hover:bg-gray-800">🌙 Toggle Theme</button>
     <p id="status" class="mt-4"></p>
 
     <!-- Result Cards -->
@@ -101,8 +94,8 @@ INDEX_HTML = """
       <div class="flex justify-between">
         <h2 class="text-lg font-bold">History</h2>
         <div>
-          <button id="exportCSV" class="px-2 py-1 bg-green-600 rounded">⬇ CSV</button>
-          <button id="exportJSON" class="px-2 py-1 bg-blue-600 rounded">⬇ JSON</button>
+          <button id="exportCSV" class="px-2 py-1 bg-green-600 text-white rounded">⬇ CSV</button>
+          <button id="exportJSON" class="px-2 py-1 bg-blue-600 text-white rounded">⬇ JSON</button>
         </div>
       </div>
       <canvas id="historyChart" height="120"></canvas>
@@ -118,7 +111,6 @@ INDEX_HTML = """
     const pingVal = document.getElementById('pingVal');
     const downloadVal = document.getElementById('downloadVal');
     const uploadVal = document.getElementById('uploadVal');
-    const toggleTheme = document.getElementById('toggleTheme');
 
     let historyData = [];
 
@@ -168,11 +160,6 @@ INDEX_HTML = """
           }
         })
         .catch(err => { statusEl.textContent = "❌ Failed: " + err.message; startBtn.disabled = false; });
-    });
-
-    toggleTheme.addEventListener('click', () => {
-      document.body.classList.toggle("bg-black");
-      document.body.classList.toggle("text-white");
     });
 
     document.getElementById('exportCSV').addEventListener('click', () => {
