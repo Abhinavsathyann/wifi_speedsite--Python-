@@ -34,7 +34,24 @@ It provides **real-time download, upload, and ping measurements**, animated visu
 - **Threading**: Python `threading` for non-blocking speed test
 
 ---
+Create a virtual environment (optional but recommended)
+```
+python -m venv venv
+source venv/bin/activate  # Linux/macOS
+venv\Scripts\activate     # Windows
 
+
+Install dependencies
+pip install flask speedtest-cli
+
+Run the application
+python wifi_speedsite.py
+
+
+Open in browser
+http://127.0.0.1:5000
+
+---
 ## 💻 Installation
 
 1. **Clone the repository**
