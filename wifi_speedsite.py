@@ -1,24 +1,4 @@
-"""
-Advanced Flask-based Internet Speed Test Website (Fully Functional)
-File: wifi_speedsite.py
-Requirements:
-  pip install flask speedtest-cli
 
-Run:
-  python wifi_speedsite.py
-  Open http://127.0.0.1:5000 in your browser
-
-Features:
-  - Modern Glassmorphism UI with gradient background
-  - Animated speedometer gauge (JS)
-  - Real-time progress simulation
-  - Speed test: ping, download, upload
-  - History with Chart.js line chart
-  - Export history to CSV/JSON
-  - Clear history button
-
-This update fixes backend issues so the Start Test button reliably triggers the speed test and returns errors when the test takes too long or fails. The speed test now runs inside a worker thread with a configurable timeout to avoid blocking the Flask worker.
-"""
 
 from flask import Flask, render_template_string, jsonify, send_file
 import speedtest
