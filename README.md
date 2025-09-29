@@ -38,9 +38,13 @@ It provides **real-time download, upload, and ping measurements**, animated visu
 ## 🖥 Usage
 
 -Click the Start Test button to measure your internet speed.
+
 -View animated gauge and flip-cards for Ping, Download, Upload.
+
 -Observe history chart of last 10 tests.
+
 -Export results via CSV or JSON buttons.
+
 -Switch between Light/Dark mode using the toggle button.
 
 ---
