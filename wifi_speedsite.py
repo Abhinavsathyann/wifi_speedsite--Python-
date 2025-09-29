@@ -52,7 +52,7 @@ INDEX_HTML = """
 </head>
 <body class="min-h-screen flex flex-col items-center justify-center">
   <div class="glass p-6 w-11/12 max-w-5xl text-center">
-    <h1 class="text-4xl font-extrabold mb-4">🚀 Advanced WiFi Speed Test</h1>
+    <h1 class="text-4xl font-extrabold mb-4">WiFi Speed Test</h1>
     
     <!-- Animated Gauge -->
     <svg id="gauge" width="220" height="220" class="mx-auto my-6">
